@@ -42,7 +42,7 @@ from selenium.webdriver.support.ui import Select, WebDriverWait
 # WEBDRIVER = os.path.join(DIRNAME, 'chromedriver-mac-arm64/chromedriver')
 
 
-class HanedaParkingReserver:
+class HanedaParkingAgent:
     URL_TOPPAGE = 'http://hnd-rsv.aeif.or.jp/airport2/app/toppage'
 
     def __init__(self, headless=True, savedir=None):
@@ -118,7 +118,7 @@ class HanedaParkingReserver:
         date_cell.click()
         WebDriverWait(self.d, 10).until(Ec.visibility_of_element_located((By.ID, 'nyujohYoteiTime')))
 
-    def select_details(self, checkout_date, checkin_time='12:00', print_debug=False):
+    def select_details(self, checkout_date, checkin_time, print_debug=False):
         assert isinstance(checkout_date, date), f'{type(checkout_date)=}'
 
         checkin_input = self.d.find_element(By.ID, 'nyujohYoteiDate')
@@ -148,7 +148,7 @@ class HanedaParkingReserver:
             status = td.get_attribute('class')
             data_date = td.get_attribute('data-date')
             print_debug and logger.warning(f'{status=}, {data_date=}, {td.text=}')
-            if status == 'day' and data_date == checkout_data_date:
+            if status in ('day', 'today day') and data_date == checkout_data_date:
                 td.click()
                 break
         else:
@@ -213,7 +213,7 @@ class HanedaParkingReserver:
 
         return dict(out)
 
-    def make_reservation(self, user, password, pid, checkin_date, checkout_date, test_only=False):
+    def make_reservation(self, user, password, pid, checkin_date, checkout_date, checkin_time, test_only=False):
         self.toppage()
         self.save_html('1_toppage.html')
 
@@ -226,7 +226,7 @@ class HanedaParkingReserver:
         self.select_date(checkin_date, pid)
         self.save_html('4_resvpage.html')
 
-        self.select_details(checkout_date)
+        self.select_details(checkout_date, checkin_time)
         self.save_html('5_confirmpage.html')
 
         if not test_only:
@@ -238,7 +238,7 @@ class HanedaParkingReserver:
 PARKING_NAMES = ('P2', 'P3')
 
 
-def reservation_main(user, password, checkin_date, days, min_days=None,
+def reservation_main(user, password, checkin_date, days, checkin_time='12:00', min_days=None,
                      parking=None, test_only=False, headless=False, print_debug=False, debug=False):
     '''
     【注意点】
@@ -259,7 +259,8 @@ def reservation_main(user, password, checkin_date, days, min_days=None,
     if test_only:
         logger.info('TEST ONLY / NO CONFIRM RESERVATION')
 
-    r = HanedaParkingReserver(headless=headless)
+    r = HanedaParkingAgent(headless=headless)
+
     prev = {}
     while True:
         try:
@@ -287,7 +288,7 @@ def reservation_main(user, password, checkin_date, days, min_days=None,
                 logger.info(f'=================== making revervation on {available_dates} at {PARKING_NAMES[pid]}')
                 checkin_date = dt.strptime(available_dates[0], '%Y/%m/%d')
                 checkout_date = dt.strptime(available_dates[-1], '%Y/%m/%d')
-                r.make_reservation(user, password, pid, checkin_date, checkout_date, test_only=test_only)
+                r.make_reservation(user, password, pid, checkin_date, checkout_date, checkin_time, test_only=test_only)
                 logger.info(f'successfully booked {available_dates} on cal:{pid} (test_only={test_only})')
 
                 # update target date
@@ -314,11 +315,19 @@ def parse_date(s):
     return dt.strptime(s, '%Y/%m/%d').date()
 
 
+def parse_time(s):
+    h, m = map(int, s.split(':', 1))
+    if m != 0 or not 0 < h <= 22:
+        raise argparse.ArgumentTypeError('time must be between 1:00 - 22:00')
+    return f'{h:02d}:{m:02d}'
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-u', '--user', required=True)
     parser.add_argument('-p', '--password', required=True)
     parser.add_argument('checkin_date', type=parse_date, help='format YYYY/mm/dd')
+    parser.add_argument('-t', '--checkin-time', type=parse_time, help='format hh:mm')
     parser.add_argument('-d', '--days', type=int, required=True, help='including check-in day')
     parser.add_argument('-m', '--min-days', type=int, default=None, help='minimum days to book')
     parser.add_argument('-P', '--parking', choices=PARKING_NAMES, help='default both')
@@ -336,7 +345,7 @@ def main():
     if days_left.days < 8:
         logger.error(f'WARNING: only {days_left} days left')
 
-    reservation_main(args.user, args.password, args.checkin_date, args.days, args.min_days,
+    reservation_main(args.user, args.password, args.checkin_date, args.days, args.checkin_time, args.min_days,
                      parking=args.parking, test_only=args.test_only, headless=args.headless,
                      print_debug=args.verbose, debug=args.debug)
 
